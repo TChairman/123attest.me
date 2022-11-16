@@ -60,7 +60,7 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
     }
     mapping(uint256 => AssertionType) public assertions;
     uint256[] public assertionList; // to enable enumeration of assertions
-    uint256 public lastAssertionAdded; // for front-ends caching the assertion list
+    uint256 public lastAssertionListUpdate; // for front-ends caching the assertion list
 
     // variables that should be set when contract is first deployed, but not overridden when upgraded
     uint256 public tipAmount;
@@ -160,13 +160,17 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
                                                 controller: controller, 
                                                 isStopped: false,
                                                 assertion: assertion});
-        lastAssertionAdded = block.timestamp;
+        lastAssertionListUpdate = block.timestamp;
         emit AssertionAdded(assertion, sigThreshold, validInterval, requireExpiration,
                 gateway, controller, assertionId, revokeId);
         (bool success, ) = msg.sender.call{value: tipAmount}("");
         require(success, "Insufficient Tip");
         emit TipReceived(msg.sender, tipAmount);
 
+    }
+
+    function isStopped(uint256 assertionId) public view virtual returns (bool) {
+        return assertions[assertionId].isStopped;
     }
 
     function stopAssertion(uint256 assertionId) public virtual {

@@ -48,7 +48,7 @@ describe("AttestMe", function () {
 
     const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAttestMeFixture);
 
-    await attestMe.connect(attestor1).addAssertion(assertion1, 86400, 8640000, false, ethers.constants.AddressZero, tipjar.address);
+    await attestMe.connect(attestor1).addAssertion(assertion1, 86400, 8640000, false, ethers.constants.AddressZero, attestor1.address);
     await attestMe.connect(attestor2).addAssertion(assertion2, 864000, 86400000, true, overrider.address, attestor2.address);
     await attestMe.connect(owner).addAssertion(assertion3, 86400, 8640000, false, tipjar.address, tipjar.address);
 
@@ -161,6 +161,14 @@ describe("AttestMe", function () {
                         .to.emit(attestMe, "AssertionAdded").withArgs(assertion1, 86400, 8640000, false, ethers.constants.AddressZero, tipjar.address, assert1Id, assert1revokeId);
       await expect(attestMe.connect(attestor1).addAssertion(assertion1, 86400, 8640000, false, ethers.constants.AddressZero, tipjar.address))
                         .to.be.reverted;
+    });
+    it("Create assertion sets lastAssertionListUpdate", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAttestMeFixture);
+      const sigtime = Math.floor((new Date()).getTime() / 1000);
+
+      await expect(attestMe.connect(attestor1).addAssertion(assertion1, 86400, 8640000, false, ethers.constants.AddressZero, tipjar.address))
+                        .to.emit(attestMe, "AssertionAdded").withArgs(assertion1, 86400, 8640000, false, ethers.constants.AddressZero, tipjar.address, assert1Id, assert1revokeId);
+      expect(await attestMe.lastAssertionListUpdate()).to.be.closeTo(sigtime, 100);
     });
     it("Controller can change gateway and controller", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAttestMeFixture);
@@ -341,38 +349,157 @@ describe("AttestMe", function () {
 
   });
 
-/* Tests to write:
-Blocking:
-Can block an address, can't block twice, emits Blocked
-Can unblocked address, can't unblock if not blocked, emits UnBlocked
-Non overrider can't block or unblock
-Blocked address cannot attest
-Address that attested then is blocked is no longer isAttested
-Blocked address can revoke
+  describe("Blocking", function () {
+    it("Can block an address, can't block twice, emits Blocked", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      await attestMe.setOverrider(overrider.address);
+      await expect(attestMe.connect(overrider).blockAddress(attestor1.address)).to.emit(attestMe,"Blocked").withArgs(attestor1.address);
+      expect(await attestMe.isBlocked(attestor1.address)).to.be.true;
+      await expect(attestMe.connect(overrider).blockAddress(attestor1.address)).to.be.revertedWith("Address already blocked");
+    });
+    it("Can unblocked address, can't unblock if not blocked, emits UnBlocked", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      await attestMe.setOverrider(overrider.address);
+      await expect(attestMe.connect(overrider).unBlockAddress(attestor1.address)).to.be.revertedWith("Address not blocked");
+      await expect(attestMe.connect(overrider).blockAddress(attestor1.address)).to.emit(attestMe,"Blocked").withArgs(attestor1.address);
+      await expect(attestMe.connect(overrider).unBlockAddress(attestor1.address)).to.emit(attestMe,"UnBlocked").withArgs(attestor1.address);
+    });
+    it("Non overrider can't block or unblock", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      await attestMe.setOverrider(overrider.address);
+      await expect(attestMe.connect(owner).blockAddress(attestor1.address)).to.be.revertedWith("Must be override address");
+      await expect(attestMe.connect(overrider).blockAddress(attestor1.address)).to.emit(attestMe,"Blocked").withArgs(attestor1.address);
+      await expect(attestMe.connect(owner).unBlockAddress(attestor1.address)).to.be.revertedWith("Must be override address");
+    });
+    it("Blocked address cannot attest", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const sigtime = Math.floor((new Date()).getTime() / 1000);
+      const signature = attestor1._signTypedData(domain, types, { assertion: assertion1, signdate: sigtime });
 
-Stopping:
-Assertion can be stopped by overrider, can't be stopped twice, emits AssertionStopped
-Assertion can be unstopped by overrider, can't unstop unless stopped, emits AssertionUnStopped
-Assertion can be stopped by controller, can't be stopped twice
-Assertion can be unstopped by controller, can't unstop unless stopped
-Assertion can't be stopped or unstopped by non overrider or controller
-Nonexistent Assertion cannot be stopped or unstopped
-Stopped assertion cannot be attested
-Stopped assertion can be revoked
+      await attestMe.setOverrider(overrider.address);
+      await expect(attestMe.connect(overrider).blockAddress(attestor1.address)).to.emit(attestMe,"Blocked").withArgs(attestor1.address);
+      await expect(attestMe.connect(attestor1).attest(assert1Id, attestor1.address, sigtime, signature))
+            .to.be.revertedWith("Address is blocked");
+    });
+    it("Address that attested then is blocked is no longer isAttested", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const sigtime = Math.floor((new Date()).getTime() / 1000);
+      const signature = attestor1._signTypedData(domain, types, { assertion: assertion1, signdate: sigtime });
 
-Tips:
-Tip amount set and collected by addAssertion and emits TipReceived
-Tip can be sent to the contract and emits TipReceived
-Tips can be collected to the tipjar, emits TipCollected
-Tip amount can be changed up and down by owner, emits NewTipAmount
-Tip amount can be changed by tip jar
+      await attestMe.setOverrider(overrider.address);
 
+      await expect(attestMe.connect(attestor1).attest(assert1Id, attestor1.address, sigtime, signature))
+            .to.emit(attestMe, "Attested").withArgs(assert1Id, attestor1.address, sigtime);
+      await expect(attestMe.connect(overrider).blockAddress(attestor1.address)).to.emit(attestMe,"Blocked").withArgs(attestor1.address);
+      expect(await attestMe.isAttested(assert1Id, attestor1.address)).to.be.false;
+    });
+    it("Blocked address can revoke", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const sigtime = Math.floor((new Date()).getTime() / 1000);
+      const signature = attestor1._signTypedData(domain, types, { assertion: assertion1, signdate: sigtime });
+      const revokesignature = attestor1._signTypedData(domain, types, { assertion: REVOKED+assertion1, signdate: sigtime });
+
+      await attestMe.setOverrider(overrider.address);
+
+      await expect(attestMe.connect(attestor1).attest(assert1Id, attestor1.address, sigtime, signature))
+            .to.emit(attestMe, "Attested").withArgs(assert1Id, attestor1.address, sigtime);
+      await expect(attestMe.connect(overrider).blockAddress(attestor1.address)).to.emit(attestMe,"Blocked").withArgs(attestor1.address);
+      await expect(attestMe.connect(attestor1).revoke(assert1Id, attestor1.address, sigtime, revokesignature))
+            .to.emit(attestMe, "Revoked").withArgs(assert1Id, attestor1.address);    
+      expect(await attestMe.isAttested(assert1Id, attestor1.address)).to.be.false;
+    });
+  });
+
+  describe("Stopping", function () {
+    it("Assertion can be stopped by overrider, can't be stopped twice, emits AssertionStopped", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      await attestMe.setOverrider(overrider.address);
+      await expect(attestMe.connect(overrider).stopAssertion(assert1Id)).to.emit(attestMe,"AssertionStopped").withArgs(assert1Id);
+      await expect(attestMe.connect(overrider).stopAssertion(assert1Id)).to.be.revertedWith("Assertion is stopped or does not exist");
+      expect(await attestMe.isStopped(assert1Id)).to.be.true;
+    });
+    it("Assertion can be unstopped by overrider, can't unstop unless stopped, emits AssertionUnStopped", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      await attestMe.setOverrider(overrider.address);
+      await expect(attestMe.connect(overrider).unStopAssertion(assert1Id)).to.be.revertedWith("Assertion is not stopped");
+      await expect(attestMe.connect(overrider).stopAssertion(assert1Id)).to.emit(attestMe,"AssertionStopped").withArgs(assert1Id);
+      await expect(attestMe.connect(overrider).unStopAssertion(assert1Id)).to.emit(attestMe,"AssertionUnStopped").withArgs(assert1Id);
+    });
+    it("Assertion can be stopped by controller, can't be stopped twice", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      await expect(attestMe.connect(attestor1).stopAssertion(assert1Id)).to.emit(attestMe,"AssertionStopped").withArgs(assert1Id);
+      await expect(attestMe.connect(attestor1).stopAssertion(assert1Id)).to.be.revertedWith("Assertion is stopped or does not exist");
+    });
+    it("Assertion can be unstopped by controller, can't unstop unless stopped", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      await expect(attestMe.connect(attestor1).unStopAssertion(assert1Id)).to.be.revertedWith("Assertion is not stopped");
+      await expect(attestMe.connect(attestor1).stopAssertion(assert1Id)).to.emit(attestMe,"AssertionStopped").withArgs(assert1Id);
+      await expect(attestMe.connect(attestor1).unStopAssertion(assert1Id)).to.emit(attestMe,"AssertionUnStopped").withArgs(assert1Id);
+    });
+    it("Assertion can't be stopped or unstopped by non overrider or controller", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      await expect(attestMe.connect(tipjar).stopAssertion(assert1Id)).to.be.revertedWith("Not authorized to stop");
+      await expect(attestMe.connect(attestor1).stopAssertion(assert1Id)).to.emit(attestMe,"AssertionStopped").withArgs(assert1Id);
+      await expect(attestMe.connect(tipjar).unStopAssertion(assert1Id)).to.be.revertedWith("Not authorized to unstop");
+    });
+    it("Nonexistent Assertion cannot be stopped or unstopped", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const invalid = "Nonexistent Assertion";
+      const invalidId = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(invalid));
+
+      await expect(attestMe.connect(tipjar).stopAssertion(invalidId)).to.be.revertedWith("Assertion is stopped or does not exist");
+      await expect(attestMe.connect(tipjar).unStopAssertion(invalidId)).to.be.revertedWith("Assertion is not stopped");
+    //  
+    });
+    it("Stopped assertion cannot be attested", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const sigtime = Math.floor((new Date()).getTime() / 1000);
+      const signature = attestor1._signTypedData(domain, types, { assertion: assertion1, signdate: sigtime });
+
+      await expect(attestMe.connect(attestor1).stopAssertion(assert1Id)).to.emit(attestMe,"AssertionStopped").withArgs(assert1Id);
+      await expect(attestMe.connect(attestor1).attest(assert1Id, attestor1.address, sigtime, signature))
+            .to.be.revertedWith("Assertion has been stopped");
+
+    });
+    it("Stopped assertion can be revoked", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const sigtime = Math.floor((new Date()).getTime() / 1000);
+      const signature = attestor1._signTypedData(domain, types, { assertion: assertion1, signdate: sigtime });
+      const revokesignature = attestor1._signTypedData(domain, types, { assertion: REVOKED+assertion1, signdate: sigtime });
+
+      await expect(attestMe.connect(attestor1).attest(assert1Id, attestor1.address, sigtime, signature))
+            .to.emit(attestMe, "Attested").withArgs(assert1Id, attestor1.address, sigtime);
+      await expect(attestMe.connect(attestor1).stopAssertion(assert1Id)).to.emit(attestMe,"AssertionStopped").withArgs(assert1Id);
+      await expect(attestMe.connect(attestor1).revoke(assert1Id, attestor1.address, sigtime, revokesignature))
+            .to.emit(attestMe, "Revoked").withArgs(assert1Id, attestor1.address);    
+      expect(await attestMe.isAttested(assert1Id, attestor1.address)).to.be.false;
+    });
+  });
+
+  describe("Tips", function () {
+    it("Tip amount set and collected by addAssertion and emits TipReceived", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+    });
+    it("Tip can be sent to the contract and emits TipReceived", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+    });
+    it("Tips can be collected to the tipjar, emits TipCollected", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+    });
+    it("Tip amount can be changed up and down by owner, emits NewTipAmount", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+    });
+    it("Tip amount can be changed by tip jar", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+    });
+  });
+
+/*
 Admin:
 Can upgrade and preserve assertions/attestations
 After renouncing ownership, cannot upgrade
 
 Assertions:
-Assertion creation updates lastAssertionUpdate
 Can get list of assertions (?)
 Assertion URI is set properly
 */
