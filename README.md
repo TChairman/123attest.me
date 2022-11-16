@@ -1,2 +1,2 @@
-# 123attest.me
-Make signed attestations as easy as 123attest.me
+# AttestMe.io and AttestMe.eth
+Make signed attestations as easy as AttestMe

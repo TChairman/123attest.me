@@ -8,17 +8,20 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol"; // TODO upgrade to non-draft version
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/SignatureCheckerUpgradeable.sol";
 
-/// @custom:security-contact security@123attest.me
+/// @custom:security-contact security@attestme.io
 contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable, EIP712Upgradeable {
 
     /* An Assertion is a statement that can be made by an address. Assertions are strings, 
-       with recommended or required validity periods, and optional gateways who can mediate who can attest to them
+       with recommended or required validity periods, and optional gateways who can mediate who can attest to them.
+       AssertionIDs are uint256 of the hashed string (could have done bytes32 I guess, any reason I should switch?)
+       Anyone can create an assertion, for a small tip in ether to protect against spam. The creator must specify the text,
+       signature expiration time, assertion expiration time, and whether the expiration is enforced in the smart contract or not.
      An Attestation is a signed Assertion that validates the signature, and records the time it was signed
-       slight hack: we record the last updated date as the balance of the account and assertion ID
+       slight hack: we record the last updated date as the balance of the account and assertion ID, this lets us use unmodified ERC1155
      Security items: the owner can upgrade the contract and also change the tipjar and overrider addresses
         It is expected that after the contract has proven maturity, ownership will be renounced and the contract made immutable
         After that, the tip jar and overrider roles can only be changed by the current holders of those addresses
-     Assertions: anyone can create an assertion, for a small fee. The creator must specify the text of the assertion, 
+        Still to figure out: the proper governance of the overrider, and who gets the tips
      Stopping and unstopping assertions: stopping an assertion means attestations for that assertion can no longer be recorded.
        Stopping does not remove existing attestations for that assertion, they are stil valid until they expire. Attestations may
        also be revoked when the assertion is stopped. The creator of the
@@ -28,18 +31,18 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
        create new attestations, and will return false ffor all attestation checks. Developers can still use balanceOf to check attestation status if
        needed. Blocked addresses can revoke attestations.
      On signatures: Replay attacks don't matter except for expiration, so no nonce is required. The date signed and the sig threshold
-        are enough to ensure proper expiration. ChainID does matter, however, so we use EIP712 to guard against that.
+        are enough to ensure proper expiration. ChainID does matter, however, so we use EIP712 domain separators.
     TODO:
-    Switch assertionId and revokeID back to bytes32
+    Finish tests
+    Switch assertionId and revokeID back to bytes32?
     Check Metamask UI to make sure it shows assertion text you are signing
-    Charge eth
     Check URI and see what that looks like on front ends
     */
 
     string constant CONTRACT_NAME = "AttestMe";
     string constant CONTRACT_VERSION = "1.0";
-    uint256 public constant BLOCKED = uint256(keccak256("Address is blocked"));
     string constant REVOKED = "Revoked: ";
+    uint256 public constant BLOCKED = uint256(keccak256("Address is blocked"));
     bytes32 private constant typeHash =
         keccak256(
             'attestation(string assertion,uint256 signdate)'
@@ -57,8 +60,9 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
     }
     mapping(uint256 => AssertionType) public assertions;
     uint256[] public assertionList; // to enable enumeration of assertions
-    uint256 public lastAssertionAdded;
+    uint256 public lastAssertionAdded; // for front-ends caching the assertion list
 
+    // variables that should be set when contract is first deployed, but not overridden when upgraded
     uint256 public tipAmount;
     address public tipJar;
     address public overrider;
@@ -85,7 +89,7 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
     }
 
     function initialize() initializer public {
-        __ERC1155_init("https://123attest.me/attestations/{id}");
+        __ERC1155_init("https://AttestMe.io/attestations/{id}/nft.jpg");
         __Ownable_init();
         __UUPSUpgradeable_init();
         __EIP712_init(CONTRACT_NAME, CONTRACT_VERSION);
@@ -96,10 +100,9 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
     // attestation functions
 
     function isAttested(uint256 assertionId, address signer) public view virtual returns (bool) {
-        uint256 lastUpdate = balanceOf(signer, assertionId);
-        return (lastUpdate > 0) && 
-                !_isBlocked(signer) && 
-                !(assertions[assertionId].requireExpiration && isExpired(assertionId, signer));
+        return (balanceOf(signer, assertionId) > 0) && 
+                !(assertions[assertionId].requireExpiration && isExpired(assertionId, signer)) &&
+                !_isBlocked(signer);
     }
 
     // returns true if past expiration regardless of requireExpiration status. Returns false for non-existent or non-attested assertions.
@@ -160,7 +163,10 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
         lastAssertionAdded = block.timestamp;
         emit AssertionAdded(assertion, sigThreshold, validInterval, requireExpiration,
                 gateway, controller, assertionId, revokeId);
-        // TODO charge 0.1 eth and emit TipReceived
+        (bool success, ) = msg.sender.call{value: tipAmount}("");
+        require(success, "Insufficient Tip");
+        emit TipReceived(msg.sender, tipAmount);
+
     }
 
     function stopAssertion(uint256 assertionId) public virtual {

@@ -107,7 +107,7 @@ describe("AttestMe", function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAttestMeFixture);
 
       await attestMe.setTipJar(tipjar.address);
-      await attestMe.connect(tipjar).setTipJar(attestor1.address);
+      await expect(attestMe.connect(tipjar).setTipJar(attestor1.address)).to.emit(attestMe, "NewTipJar").withArgs(tipjar.address, attestor1.address);
       expect(await attestMe.tipJar()).to.equal(attestor1.address);
     });
     it("Tip jar set owner reverts", async function () {
@@ -126,7 +126,7 @@ describe("AttestMe", function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAttestMeFixture);
 
       await attestMe.setOverrider(overrider.address);
-      await attestMe.connect(overrider).setOverrider(attestor1.address);
+      await expect(attestMe.connect(overrider).setOverrider(attestor1.address)).to.emit(attestMe, "NewOverrider").withArgs(overrider.address, attestor1.address);
       expect(await attestMe.overrider()).to.equal(attestor1.address);
     });
     it("Set overrider reverts", async function () {
@@ -135,7 +135,6 @@ describe("AttestMe", function () {
       await attestMe.setOverrider(overrider.address);
       await expect(attestMe.connect(attestor1).setTipJar(attestor1.address)).to.be.reverted;
     });
-    // TODO check event emissions here
   });
 
   describe("Assertions", function () {
@@ -343,19 +342,17 @@ describe("AttestMe", function () {
   });
 
 /* Tests to write:
-Check all events!
-
 Blocking:
-Can block an address, can't block twice
-Can unblocked address, can't unblock if not blocked
+Can block an address, can't block twice, emits Blocked
+Can unblocked address, can't unblock if not blocked, emits UnBlocked
 Non overrider can't block or unblock
 Blocked address cannot attest
 Address that attested then is blocked is no longer isAttested
 Blocked address can revoke
 
 Stopping:
-Assertion can be stopped by overrider, can't be stopped twice
-Assertion can be unstopped by overrider, can't unstop unless stopped
+Assertion can be stopped by overrider, can't be stopped twice, emits AssertionStopped
+Assertion can be unstopped by overrider, can't unstop unless stopped, emits AssertionUnStopped
 Assertion can be stopped by controller, can't be stopped twice
 Assertion can be unstopped by controller, can't unstop unless stopped
 Assertion can't be stopped or unstopped by non overrider or controller
@@ -364,19 +361,17 @@ Stopped assertion cannot be attested
 Stopped assertion can be revoked
 
 Tips:
-Tip can be sent to the contract and TipReceived
-Tips can be collected to the tipjar
-Tip amount can be changed up and down by owner
-Tip jar can be changed by owner
+Tip amount set and collected by addAssertion and emits TipReceived
+Tip can be sent to the contract and emits TipReceived
+Tips can be collected to the tipjar, emits TipCollected
+Tip amount can be changed up and down by owner, emits NewTipAmount
 Tip amount can be changed by tip jar
-Tip jar can be changed by tip jar
 
 Admin:
 Can upgrade and preserve assertions/attestations
 After renouncing ownership, cannot upgrade
 
 Assertions:
-Assertion charges tip
 Assertion creation updates lastAssertionUpdate
 Can get list of assertions (?)
 Assertion URI is set properly
