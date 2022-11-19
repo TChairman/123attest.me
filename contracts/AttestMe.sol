@@ -78,7 +78,7 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
     event NewController(uint256 id, address old, address newaddr);
     event NewGateway(uint256 id, address old, address newaddr);
     event TipReceived(address from, uint256 amt);
-    event TipCollected(uint256 amt);
+    event TipOut(uint256 amt);
     event NewTipAmount(uint256 old, uint256 newamt);
     event NewTipJar(address old, address newaddr);
     event NewOverrider(address old, address newaddr);
@@ -141,7 +141,7 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
     // assertion functions
 
     modifier requiresFee(uint256 fee) {
-        require(msg.value >= fee);
+        require(msg.value >= fee, "Insufficient Tip");
         _;
     }
 
@@ -164,7 +164,7 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
         emit AssertionAdded(assertion, sigThreshold, validInterval, requireExpiration,
                 gateway, controller, assertionId, revokeId);
         (bool success, ) = msg.sender.call{value: tipAmount}("");
-        require(success, "Insufficient Tip");
+        require(success, "Tip not received");
         emit TipReceived(msg.sender, tipAmount);
 
     }
@@ -241,11 +241,11 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
         emit TipReceived(msg.sender, msg.value);
     }
 
-    function collectTips() public virtual {
+    function tipOut() public virtual {
         uint256 amount = address(this).balance;
         (bool sent, ) = payable(tipJar).call{value: amount}("");
-        require(sent, "Failed to collect tips");
-        emit TipCollected(amount);
+        require(sent, "Failed to tip out");
+        emit TipOut(amount);
     }
     
     function setTipAmount(uint256 newAmount) public virtual {

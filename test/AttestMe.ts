@@ -479,6 +479,17 @@ describe("AttestMe", function () {
   describe("Tips", function () {
     it("Tip amount set and collected by addAssertion and emits TipReceived", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const newAmount = ethers.utils.parseEther("0.01");
+      const assertion4 = "This is assertion 4";
+      const assert4Id = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(assertion4));
+
+      await attestMe.setTipJar(tipjar.address);
+      await expect(attestMe.connect(tipjar).setTipAmount(newAmount)).to.emit(attestMe, "NewTipAmount").withArgs(0, newAmount);
+      await expect(attestMe.connect(attestor1).addAssertion(assertion4, 86400, 8640000, false, ethers.constants.AddressZero, tipjar.address, { value: newAmount }))
+                  .to.emit(attestMe, "TipReceived").withArgs(attestor1.address, newAmount);
+      expect(await attestMe.assertionList(3)).to.equal(assert4Id);
+      const bal = await ethers.provider.getBalance(attestMe.address);
+      expect(bal).to.be.equal(newAmount);
     });
     it("Tip can be sent to the contract and emits TipReceived", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
@@ -494,14 +505,12 @@ describe("AttestMe", function () {
     });
   });
 
-/*
+/* Still to test
 Admin:
 Can upgrade and preserve assertions/attestations
 After renouncing ownership, cannot upgrade
-
-Assertions:
-Can get list of assertions (?)
-Assertion URI is set properly
+Can get list of assertions
+Assertion URI is set properly to see an image
 */
 
 });
