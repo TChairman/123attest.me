@@ -1,2 +1,3 @@
 # AttestMe.io and AttestMe.eth
-Make signed attestations as easy as AttestMe
+Soulbound tokens that represent verifiable signed attestations.
+Easy to integrate. Use existing attestations, or create your own.
