@@ -4,6 +4,7 @@ import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { BigNumber, Signer } from "ethers";
 import { keccak256, toUtf8Bytes, _TypedDataEncoder } from "ethers/lib/utils";
+import { experimentalAddHardhatNetworkMessageTraceHook } from "hardhat/config";
 
 describe("AttestMe", function () {
 
@@ -56,25 +57,6 @@ describe("AttestMe", function () {
   }
 
   describe("Deployment", function () {
-    /* Here are the contract functions I removed, that were needed for this debugging test. Now superseded by sig checking below.
-    function checkme() public  virtual {
-        emit CheckMe(bytes(CONTRACT_NAME), bytes(CONTRACT_VERSION), block.chainid, address(this));
-    }
-    function domainSeparatorV4() public view returns (bytes32) {
-        return _domainSeparatorV4();
-    }
-
-    it("Domain separator returns properly", async () => {
-      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAttestMeFixture);
-      const chainId = 31337; // don't use network.chainId, doesn't match
-      const verifyingContract = attestMe.address;
-
-      await expect(attestMe.checkme()).to.emit(attestMe, "CheckMe").withArgs(toUtf8Bytes("AttestMe"), toUtf8Bytes("1.0"), chainId, verifyingContract);
-
-      const expectedDS = await ethers.utils._TypedDataEncoder.hashDomain(domain);
-      expect(await attestMe.domainSeparatorV4()).to.equal(expectedDS);
-    });
-    */
     it("Check owner is set", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAttestMeFixture);
 
@@ -267,10 +249,11 @@ describe("AttestMe", function () {
     it("Attest date must not be in the future or older than interval", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
       const sigtime = Math.floor((new Date()).getTime() / 1000);
+      const signature = attestor1._signTypedData(domain, types, { assertion: assertion1, signdate: sigtime });
 
-      await expect(attestMe.connect(tipjar).attest(assert3Id, attestor1.address, sigtime+1000, 0x0))
+      await expect(attestMe.connect(tipjar).attest(assert3Id, attestor1.address, sigtime+1000, signature))
             .to.be.revertedWith("Signature expired");
-      await expect(attestMe.connect(tipjar).attest(assert3Id, attestor1.address, sigtime-87400, 0x0))
+      await expect(attestMe.connect(tipjar).attest(assert3Id, attestor1.address, sigtime-87400, signature))
             .to.be.revertedWith("Signature expired");
     });
     it("Gated assertion: attestation must come from gateway", async function () {
@@ -479,29 +462,91 @@ describe("AttestMe", function () {
   describe("Tips", function () {
     it("Tip amount set and collected by addAssertion and emits TipReceived", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
-      const newAmount = ethers.utils.parseEther("0.01");
+      const tipAmount = ethers.utils.parseEther("0.1");
       const assertion4 = "This is assertion 4";
       const assert4Id = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(assertion4));
 
       await attestMe.setTipJar(tipjar.address);
-      await expect(attestMe.connect(tipjar).setTipAmount(newAmount)).to.emit(attestMe, "NewTipAmount").withArgs(0, newAmount);
-      await expect(attestMe.connect(attestor1).addAssertion(assertion4, 86400, 8640000, false, ethers.constants.AddressZero, tipjar.address, { value: newAmount }))
-                  .to.emit(attestMe, "TipReceived").withArgs(attestor1.address, newAmount);
+      await expect(attestMe.connect(tipjar).setTipAmount(tipAmount)).to.emit(attestMe, "NewTipAmount").withArgs(0, tipAmount);
+
+      await expect(attestMe.connect(attestor2).addAssertion(assertion4, 86400, 8640000, false, ethers.constants.AddressZero, attestor1.address, { value: tipAmount }))
+                  .to.emit(attestMe, "TipReceived").withArgs(attestor2.address, tipAmount);
       expect(await attestMe.assertionList(3)).to.equal(assert4Id);
+
       const bal = await ethers.provider.getBalance(attestMe.address);
-      expect(bal).to.be.equal(newAmount);
+      expect(bal).to.be.equal(tipAmount);
+    });
+    it("Tip amount set and undertip reverts", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const tipAmount = ethers.utils.parseEther("0.1");
+      const undertip = ethers.utils.parseEther("0.001");
+      const assertion4 = "This is assertion 4";
+
+      await attestMe.setTipJar(tipjar.address);
+      await expect(attestMe.connect(tipjar).setTipAmount(tipAmount)).to.emit(attestMe, "NewTipAmount").withArgs(0, tipAmount);
+
+      await expect(attestMe.connect(attestor2).addAssertion(assertion4, 86400, 8640000, false, ethers.constants.AddressZero, attestor1.address, { value: undertip }))
+                  .to.be.revertedWith("Must send tipAmount()");
+    });
+    it("Tip amount set and overtip collected by addAssertion", async function () {
+      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const tipAmount = ethers.utils.parseEther("0.1");
+      const overtip = ethers.utils.parseEther("1.0");
+      const assertion4 = "This is assertion 4";
+
+      await attestMe.setTipJar(tipjar.address);
+      await expect(attestMe.connect(tipjar).setTipAmount(tipAmount)).to.emit(attestMe, "NewTipAmount").withArgs(0, tipAmount);
+
+      await expect(attestMe.connect(attestor2).addAssertion(assertion4, 86400, 8640000, false, ethers.constants.AddressZero, attestor1.address, { value: overtip }))
+                  .to.emit(attestMe, "TipReceived").withArgs(attestor2.address, overtip);
+
+      const bal = await ethers.provider.getBalance(attestMe.address);
+      expect(bal).to.be.equal(overtip);
     });
     it("Tip can be sent to the contract and emits TipReceived", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const tipAmount = ethers.utils.parseEther("0.1");
+      await expect(attestor1.sendTransaction({
+        to: attestMe.address,
+        value: tipAmount
+      })).to.emit(attestMe, "TipReceived").withArgs(attestor1.address, tipAmount);
+      const bal = await ethers.provider.getBalance(attestMe.address);
+      expect(bal).to.be.equal(tipAmount);
     });
-    it("Tips can be collected to the tipjar, emits TipCollected", async function () {
+    it("Tips can be sent out to the tipjar, emits TipOut", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const tipAmount = ethers.utils.parseEther("0.1");
+      const assertion4 = "This is assertion 4";
+      await attestMe.setTipJar(tipjar.address);
+      await attestMe.setTipAmount(tipAmount);
+      let oldBal = await ethers.provider.getBalance(tipjar.address);
+
+      await expect(attestor1.sendTransaction({
+        to: attestMe.address,
+        value: tipAmount
+      })).to.emit(attestMe, "TipReceived").withArgs(attestor1.address, tipAmount);
+
+      await expect(attestMe.tipOut()).to.emit(attestMe, "TipOut").withArgs(tipAmount);
+      let newBal = await ethers.provider.getBalance(tipjar.address);
+
+      expect(newBal.sub(oldBal)).to.be.equal(tipAmount);
+
+      oldBal = newBal;
+      await attestMe.connect(attestor1).addAssertion(assertion4, 86400, 8640000, false, ethers.constants.AddressZero, attestor1.address, { value: tipAmount });
+      await attestMe.tipOut();
+      newBal = await ethers.provider.getBalance(tipjar.address);
+
+      expect(newBal.sub(oldBal)).to.be.equal(tipAmount);
     });
-    it("Tip amount can be changed up and down by owner, emits NewTipAmount", async function () {
+    it("Tip amount can be changed up and down by only tip jar and owner, emits NewTipAmount", async function () {
       const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
-    });
-    it("Tip amount can be changed by tip jar", async function () {
-      const { attestMe, owner, tipjar, overrider, attestor1, attestor2 } = await loadFixture(deployAssertionsFixture);
+      const tipAmount = ethers.utils.parseEther("0.1");
+      const tipAmt2 = ethers.utils.parseEther("1.0");
+      await attestMe.setTipJar(tipjar.address);
+      await expect(attestMe.connect(owner).setTipAmount(tipAmount)).to.emit(attestMe, "NewTipAmount").withArgs(0, tipAmount);
+      await expect(attestMe.connect(owner).setTipAmount(tipAmt2)).to.emit(attestMe, "NewTipAmount").withArgs(tipAmount, tipAmt2);
+      await expect(attestMe.connect(tipjar).setTipAmount(tipAmount)).to.emit(attestMe, "NewTipAmount").withArgs(tipAmt2, tipAmount);
+      await expect(attestMe.connect(attestor1).setTipAmount(tipAmount)).to.be.reverted;
     });
   });
 

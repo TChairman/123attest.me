@@ -16,7 +16,7 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
        AssertionIDs are uint256 of the hashed string (could have done bytes32 I guess, any reason I should switch?)
        Anyone can create an assertion, for a small tip in ether to protect against spam. The creator must specify the text,
        signature expiration time, assertion expiration time, and whether the expiration is enforced in the smart contract or not.
-     An Attestation is a signed Assertion that validates the signature, and records the time it was signed
+     An Attestation is a soulbound NFT that represents a signed Assertion. The contract validates the signature, and records the time it was signed
        slight hack: we record the last updated date as the balance of the account and assertion ID, this lets us use unmodified ERC1155
      Security items: the owner can upgrade the contract and also change the tipjar and overrider addresses
         It is expected that after the contract has proven maturity, ownership will be renounced and the contract made immutable
@@ -140,13 +140,14 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
 
     // assertion functions
 
-    modifier requiresFee(uint256 fee) {
-        require(msg.value >= fee, "Insufficient Tip");
+    modifier requiresTip(uint256 fee) {
+        require(msg.value >= fee, "Must send tipAmount()");
+        emit TipReceived(msg.sender, msg.value);
         _;
     }
 
     function addAssertion(string memory assertion, uint256 sigThreshold, uint256 validInterval, bool requireExpiration,
-                address gateway, address controller) public virtual payable requiresFee(tipAmount) returns (uint256 assertionId, uint256 revokeId) {
+                address gateway, address controller) public virtual payable requiresTip(tipAmount) returns (uint256 assertionId, uint256 revokeId) {
         require(bytes(assertion).length != 0, "Assertion must not be empty");
         assertionId = uint256(keccak256(abi.encodePacked(assertion)));
         require(!_assertionExists(assertionId), "Assertion already exists");
@@ -163,10 +164,6 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
         lastAssertionListUpdate = block.timestamp;
         emit AssertionAdded(assertion, sigThreshold, validInterval, requireExpiration,
                 gateway, controller, assertionId, revokeId);
-        (bool success, ) = msg.sender.call{value: tipAmount}("");
-        require(success, "Tip not received");
-        emit TipReceived(msg.sender, tipAmount);
-
     }
 
     function isStopped(uint256 assertionId) public view virtual returns (bool) {
