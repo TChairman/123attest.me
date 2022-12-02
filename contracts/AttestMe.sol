@@ -16,7 +16,7 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
        AssertionIDs are uint256 of the hashed string (could have done bytes32 I guess, any reason I should switch?)
        Anyone can create an assertion, for a small tip in ether to protect against spam. The creator must specify the text,
        signature expiration time, assertion expiration time, and whether the expiration is enforced in the smart contract or not.
-     An Attestation is a soulbound NFT that represents a signed Assertion. The contract validates the signature, and records the time it was signed
+     An Attestation is a soulbound NFT that represents proof of a signed Assertion. The contract validates the signature, and records the time it was signed
        slight hack: we record the last updated date as the balance of the account and assertion ID, this lets us use unmodified ERC1155
      Security items: the owner can upgrade the contract and also change the tipjar and overrider addresses
         It is expected that after the contract has proven maturity, ownership will be renounced and the contract made immutable
@@ -33,8 +33,6 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
      On signatures: Replay attacks don't matter except for expiration, so no nonce is required. The date signed and the sig threshold
         are enough to ensure proper expiration. ChainID does matter, however, so we use EIP712 domain separators.
     TODO:
-    Finish tests
-    Switch assertionId and revokeID back to bytes32?
     Check Metamask UI to make sure it shows assertion text you are signing
     Check URI and see what that looks like on front ends
     */
@@ -164,6 +162,11 @@ contract AttestMe is Initializable, ERC1155Upgradeable, OwnableUpgradeable, UUPS
         lastAssertionListUpdate = block.timestamp;
         emit AssertionAdded(assertion, sigThreshold, validInterval, requireExpiration,
                 gateway, controller, assertionId, revokeId);
+    }
+    
+    // interesting that Solidity doesn't provide a default getter for this
+    function assertionListLength() public view virtual returns (uint256) {
+        return assertionList.length;
     }
 
     function isStopped(uint256 assertionId) public view virtual returns (bool) {
